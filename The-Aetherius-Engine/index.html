@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aetherius Engine :: Quantum-Neuromorphic Visualizer</title>
+    <style>
+        :root {
+            --bg-color: #050505;
+            --term-color: #0f0f12;
+            --text-color: #a0a0a0;
+            --accent-color: #00ff9d;
+            --secondary-color: #00bcd4;
+            --alert-color: #ff5252;
+            --font-main: 'Courier New', Courier, monospace;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-main);
+            overflow: hidden;
+            display: flex;
+            height: 100vh;
+        }
+
+        /* --- UI Layout --- */
+        #container {
+            display: flex;
+            width: 100%;
+            height: 100%;
+        }
+
+        #visualization {
+            flex: 2;
+            position: relative;
+            background: radial-gradient(circle at center, #0a0a0e 0%, #000000 100%);
+            overflow: hidden;
+        }
+
+        #sidebar {
+            flex: 1;
+            max-width: 400px;
+            background-color: var(--term-color);
+            border-left: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            padding: 10px;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+
+        /* --- Terminal / Logs --- */
+        #terminal-header {
+            font-size: 14px;
+            color: var(--accent-color);
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: bold;
+        }
+
+        #logs {
+            flex: 1;
+            overflow-y: auto;
+            font-size: 11px;
+            line-height: 1.4;
+            color: #888;
+            font-family: 'Consolas', 'Monaco', monospace;
+            scrollbar-width: thin;
+            scrollbar-color: #333 #111;
+        }
+
+        #logs::-webkit-scrollbar {
+            width: 6px;
+        }
+        #logs::-webkit-scrollbar-thumb {
+            background-color: #333;
+        }
+
+        .log-entry { margin-bottom: 4px; }
+        .log-time { color: #555; margin-right: 5px; }
+        .log-info { color: #888; }
+        .log-warn { color: var(--secondary-color); }
+        .log-crit { color: var(--alert-color); }
+        .log-success { color: var(--accent-color); }
+
+        /* --- Metrics Panel --- */
+        #metrics {
+            height: 150px;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .metric-val { color: var(--accent-color); }
+
+        /* --- Canvas --- */
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* --- Overlay Elements --- */
+        .overlay-text {
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.5;
+            font-size: 10px;
+            color: var(--secondary-color);
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--accent-color);
+            font-size: 24px;
+            letter-spacing: 5px;
+            animation: pulse 1.5s infinite;
+            z-index: 100;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border: 1px solid var(--accent-color);
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.5; text-shadow: 0 0 5px var(--accent-color); }
+            50% { opacity: 1; text-shadow: 0 0 20px var(--accent-color); }
+            100% { opacity: 0.5; text-shadow: 0 0 5px var(--accent-color); }
+        }
+
+        @media (max-width: 768px) {
+            #container { flex-direction: column; }
+            #sidebar { max-width: 100%; height: 30%; border-left: none; border-top: 1px solid #333; }
+            #visualization { flex: 1; height: 70%; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">INITIALIZING AETHERIUS KERNEL...</div>
+
+    <div id="container">
+        <div id="visualization">
+            <canvas id="simCanvas"></canvas>
+            <div id="version" class="overlay-text" style="bottom: 10px; left: 10px;">v0.9.4-alpha :: QUANTUM-NEUROMORPHIC</div>
+        </div>
+        <div id="sidebar">
+            <div id="terminal-header">
+                System Status: <span style="color:var(--accent-color)">ONLINE</span><br>
+                Mode: <span style="color:var(--secondary-color)">SUPERPOSITION_FLUX</span>
+            </div>
+            <div id="logs"></div>
+            <div id="metrics">
+                <div class="metric-row"><span>Active Qubits:</span> <span id="m-qubits" class="metric-val">0</span></div>
+                <div class="metric-row"><span>System Entropy:</span> <span id="m-entropy" class="metric-val">0.0000 J/K</span></div>
+                <div class="metric-row"><span>Coherence:</span> <span id="m-coherence" class="metric-val">100%</span></div>
+                <div class="metric-row"><span>Born Probability:</span> <span id="m-born" class="metric-val">0.0000</span></div>
+                <div style="margin-top:10px; height: 4px; background: #222; width: 100%;">
+                    <div id="load-bar" style="height:100%; width: 0%; background: var(--secondary-color); transition: width 0.2s;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Aetherius Engine Web Visualizer
+         * Simulates the Python backend logic in a visual Canvas environment.
+         */
+
+        // --- Core Configuration ---
+        const CONFIG = {
+            nodeCount: 60,
+            connectionRadius: 150,
+            signalSpeed: 2.5,
+            collapseInterval: 200, // Frames
+            colors: {
+                nodeIdle: 'rgba(50, 50, 60, 0.6)',
+                nodeActive: 'rgba(0, 255, 157, 0.8)',
+                nodeCollapsed: 'rgba(255, 82, 82, 0.9)',
+                link: 'rgba(0, 188, 212, 0.15)',
+                signal: '#fff'
+            }
+        };
+
+        // --- Logger System ---
+        const logsContainer = document.getElementById('logs');
+        const MAX_LOGS = 100;
+
+        function log(msg, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            
+            const time = new Date().toISOString().split('T')[1].slice(0, -1);
+            const typeClass = `log-${type}`;
+            
+            entry.innerHTML = `<span class="log-time">[${time}]</span><span class="${typeClass}">:: ${msg}</span>`;
+            
+            logsContainer.appendChild(entry);
+            if (logsContainer.children.length > MAX_LOGS) {
+                logsContainer.removeChild(logsContainer.firstChild);
+            }
+            logsContainer.scrollTop = logsContainer.scrollHeight;
+        }
+
+        // --- Physics/Math Utils ---
+        class Complex {
+            constructor(re, im) { this.re = re; this.im = im; }
+            add(c) { return new Complex(this.re + c.re, this.im + c.im); }
+            abs() { return Math.sqrt(this.re * this.re + this.im * this.im); }
+        }
+
+        // --- Components ---
+
+        class Node {
+            constructor(id, x, y) {
+                this.id = id;
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 0.5;
+                this.vy = (Math.random() - 0.5) * 0.5;
+                this.radius = Math.random() * 3 + 2;
+                
+                // Quantum State
+                this.amplitude = new Complex(Math.random(), Math.random());
+                this.phase = Math.random() * Math.PI * 2;
+                this.state = 'SUPERPOSITION'; // SUPERPOSITION, COLLAPSED
+                this.energy = 0;
+                this.collapseTimer = 0;
+            }
+
+            update(width, height) {
+                // Drift
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Bounce
+                if (this.x < 0 || this.x > width) this.vx *= -1;
+                if (this.y < 0 || this.y > height) this.vy *= -1;
+
+                // Decay energy
+                this.energy *= 0.95;
+
+                // State Management
+                if (this.state === 'COLLAPSED') {
+                    this.collapseTimer--;
+                    if (this.collapseTimer <= 0) {
+                        this.state = 'SUPERPOSITION';
+                    }
+                }
+            }
+
+            draw(ctx) {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius + (this.energy * 5), 0, Math.PI * 2);
+                
+                if (this.state === 'COLLAPSED') {
+                    ctx.fillStyle = CONFIG.colors.nodeCollapsed;
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = CONFIG.colors.nodeCollapsed;
+                } else if (this.energy > 0.1) {
+                    ctx.fillStyle = CONFIG.colors.nodeActive;
+                    ctx.shadowBlur = 10 * this.energy;
+                    ctx.shadowColor = CONFIG.colors.nodeActive;
+                } else {
+                    ctx.fillStyle = CONFIG.colors.nodeIdle;
+                    ctx.shadowBlur = 0;
+                }
+                
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset
+            }
+
+            receiveSignal(magnitude) {
+                this.energy = Math.min(this.energy + magnitude, 1.0);
+                
+                // Chance to collapse based on energy (Born Rule sim)
+                if (this.state === 'SUPERPOSITION' && Math.random() < (this.energy * 0.05)) {
+                    this.collapse();
+                }
+            }
+
+            collapse() {
+                this.state = 'COLLAPSED';
+                this.collapseTimer = 20 + Math.random() * 20;
+                this.energy = 1.0;
+                
+                // Log occasionally
+                if (Math.random() < 0.1) {
+                    log(`Wavefunction collapse at NODE_${this.id.substring(0,4)} | Eigenvalue: ${(Math.random()).toFixed(4)}`, 'warn');
+                }
+            }
+        }
+
+        class Signal {
+            constructor(startNode, endNode) {
+                this.start = startNode;
+                this.end = endNode;
+                this.progress = 0;
+                this.speed = CONFIG.signalSpeed / Math.hypot(endNode.x - startNode.x, endNode.y - startNode.y) * 10;
+                this.active = true;
+            }
+
+            update() {
+                this.progress += this.speed;
+                if (this.progress >= 1) {
+                    this.active = false;
+                    this.end.receiveSignal(0.3);
+                }
+            }
+
+            draw(ctx) {
+                if (!this.active) return;
+                const x = this.start.x + (this.end.x - this.start.x) * this.progress;
+                const y = this.start.y + (this.end.y - this.start.y) * this.progress;
+
+                ctx.beginPath();
+                ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+                ctx.fillStyle = CONFIG.colors.signal;
+                ctx.shadowBlur = 5;
+                ctx.shadowColor = 'white';
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // --- Engine Kernel ---
+
+        class AetheriusKernel {
+            constructor() {
+                this.canvas = document.getElementById('simCanvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.nodes = [];
+                this.signals = [];
+                this.width = 0;
+                this.height = 0;
+                this.frameCount = 0;
+                
+                this.resize();
+                window.addEventListener('resize', () => this.resize());
+                
+                this.initNodes();
+                this.bootSequence();
+            }
+
+            resize() {
+                this.width = this.canvas.parentElement.clientWidth;
+                this.height = this.canvas.parentElement.clientHeight;
+                this.canvas.width = this.width;
+                this.canvas.height = this.height;
+            }
+
+            initNodes() {
+                for (let i = 0; i < CONFIG.nodeCount; i++) {
+                    const id = Math.random().toString(36).substr(2, 9).toUpperCase();
+                    this.nodes.push(new Node(id, Math.random() * this.width, Math.random() * this.height));
+                }
+            }
+
+            bootSequence() {
+                setTimeout(() => { document.getElementById('loading').style.display = 'none'; }, 1500);
+                log('Initializing Aetherius Kernel v0.9.4...', 'info');
+                setTimeout(() => log('Allocating Hilbert Space Memory Blocks...', 'info'), 400);
+                setTimeout(() => log('Generating Topological Qubit Arrays...', 'info'), 800);
+                setTimeout(() => log('KERNEL ONLINE. QUANTUM FLUX STABLE.', 'success'), 1200);
+                this.animate();
+            }
+
+            spawnSignal() {
+                // Pick random source
+                const source = this.nodes[Math.floor(Math.random() * this.nodes.length)];
+                // Find neighbors
+                const neighbors = this.nodes.filter(n => {
+                    const d = Math.hypot(n.x - source.x, n.y - source.y);
+                    return d < CONFIG.connectionRadius && d > 0;
+                });
+
+                if (neighbors.length > 0) {
+                    const target = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    this.signals.push(new Signal(source, target));
+                }
+            }
+
+            updateMetrics() {
+                if (this.frameCount % 10 !== 0) return;
+
+                const active = this.nodes.filter(n => n.energy > 0.1).length;
+                const entropy = (Math.random() * 0.5 + 0.5).toFixed(4);
+                const coherence = (100 - (active / CONFIG.nodeCount) * 50).toFixed(1);
+
+                document.getElementById('m-qubits').innerText = CONFIG.nodeCount;
+                document.getElementById('m-entropy').innerText = `${entropy} J/K`;
+                document.getElementById('m-coherence').innerText = `${coherence}%`;
+                document.getElementById('m-born').innerText = Math.random().toFixed(4);
+                
+                // Random fluctuating load bar
+                document.getElementById('load-bar').style.width = Math.floor(Math.random() * 60 + 20) + '%';
+            }
+
+            animate() {
+                this.ctx.fillStyle = CONFIG.colors.bg;
+                this.ctx.clearRect(0, 0, this.width, this.height);
+
+                // Connections
+                this.ctx.strokeStyle = CONFIG.colors.link;
+                this.ctx.lineWidth = 1;
+                this.ctx.beginPath();
+                for (let i = 0; i < this.nodes.length; i++) {
+                    const n1 = this.nodes[i];
+                    for (let j = i + 1; j < this.nodes.length; j++) {
+                        const n2 = this.nodes[j];
+                        const dist = Math.hypot(n1.x - n2.x, n1.y - n2.y);
+                        if (dist < CONFIG.connectionRadius) {
+                            this.ctx.moveTo(n1.x, n1.y);
+                            this.ctx.lineTo(n2.x, n2.y);
+                        }
+                    }
+                }
+                this.ctx.stroke();
+
+                // Nodes
+                this.nodes.forEach(node => {
+                    node.update(this.width, this.height);
+                    node.draw(this.ctx);
+                });
+
+                // Signals
+                this.signals = this.signals.filter(s => s.active);
+                this.signals.forEach(s => {
+                    s.update();
+                    s.draw(this.ctx);
+                });
+
+                // Spawner
+                if (Math.random() < 0.2) this.spawnSignal();
+
+                // Metrics & Logs
+                this.frameCount++;
+                this.updateMetrics();
+
+                // Random System Events
+                if (Math.random() < 0.005) {
+                    const events = [
+                        "Re-normalizing State Vectors...",
+                        "Garbage Collection in Sector 7G",
+                        "Entanglement Swapping initiated",
+                        "Decoherence detected in local cluster"
+                    ];
+                    log(events[Math.floor(Math.random() * events.length)], 'info');
+                }
+
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+
+        // Start
+        window.onload = () => {
+            const engine = new AetheriusKernel();
+        };
+
+    </script>
+</body>
+</html>
